@@ -47,7 +47,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-
 const VERSION_HEADER: &str = "x-ms-version-id";
 static MS_CACHE_CONTROL: HeaderName = HeaderName::from_static("x-ms-blob-cache-control");
 static MS_CONTENT_TYPE: HeaderName = HeaderName::from_static("x-ms-blob-content-type");
@@ -83,29 +82,20 @@ pub(crate) enum Error {
     },
 
     #[snafu(display("Error performing bulk delete request: {}", source))]
-    BulkDeleteRequest {
-        source: crate::client::retry::Error
-    },
+    BulkDeleteRequest { source: crate::client::retry::Error },
 
     #[snafu(display("Error receiving bulk delete request body: {}", source))]
-    BulkDeleteRequestBody {
-        source: reqwest::Error
-    },
+    BulkDeleteRequestBody { source: reqwest::Error },
 
     #[snafu(display(
         "Bulk delete request failed due to invalid input: {} (code: {})",
         reason,
         code
     ))]
-    BulkDeleteRequestInvalidInput {
-        code: String,
-        reason: String,
-    },
+    BulkDeleteRequestInvalidInput { code: String, reason: String },
 
     #[snafu(display("Got invalid bulk delete response: {}", reason))]
-    InvalidBulkDeleteResponse {
-        reason: String
-    },
+    InvalidBulkDeleteResponse { reason: String },
 
     #[snafu(display(
         "Bulk delete request failed for key {}: {} (code: {})",
@@ -311,7 +301,13 @@ fn write_headers(headers: &HeaderMap, dst: &mut Vec<u8>) {
     }
 }
 
-fn serialize_part_request(dst: &mut Vec<u8>, boundary: &str, idx: usize, request: reqwest::Request, relative_url: String) {
+fn serialize_part_request(
+    dst: &mut Vec<u8>,
+    boundary: &str,
+    idx: usize,
+    request: reqwest::Request,
+    relative_url: String,
+) {
     // Encode start marker for part
     extend(dst, b"--");
     extend(dst, boundary.as_bytes());
@@ -337,12 +333,13 @@ fn serialize_part_request(dst: &mut Vec<u8>, boundary: &str, idx: usize, request
     extend(dst, b"\r\n");
 }
 
-fn parse_response_part(remaining: &mut &[u8], results: &mut Vec<Result<Path>>, paths: &[Path]) -> Result<()> {
-
-    let invalid_response = |msg: &str| {
-        Error::InvalidBulkDeleteResponse {
-            reason: msg.to_string()
-        }
+fn parse_response_part(
+    remaining: &mut &[u8],
+    results: &mut [Result<Path>],
+    paths: &[Path],
+) -> Result<()> {
+    let invalid_response = |msg: &str| Error::InvalidBulkDeleteResponse {
+        reason: msg.to_string(),
     };
 
     // Parse part headers and retrieve part id
@@ -356,9 +353,7 @@ fn parse_response_part(remaining: &mut &[u8], results: &mut Vec<Result<Path>>, p
                 .and_then(|h| std::str::from_utf8(h.value).ok())
                 .and_then(|v| v.parse::<usize>().ok())
         }
-        _ => {
-            return Err(invalid_response("unable to parse parse headers").into())
-        }
+        _ => return Err(invalid_response("unable to parse parse headers").into()),
     };
 
     // Parse part response headers
@@ -375,9 +370,7 @@ fn parse_response_part(remaining: &mut &[u8], results: &mut Vec<Result<Path>>, p
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or_default()
         }
-        _ => {
-            return Err(invalid_response("unable to parse response").into())
-        }
+        _ => return Err(invalid_response("unable to parse response").into()),
     };
 
     let part_body = &remaining[..content_length];
@@ -398,27 +391,22 @@ fn parse_response_part(remaining: &mut &[u8], results: &mut Vec<Result<Path>>, p
             results[id] = Err(Error::DeleteFailed {
                 path: paths[id].as_ref().to_string(),
                 code: code.to_string(),
-                reason: part_response.reason
-                    .unwrap_or_default()
-                    .to_string(),
-            }.into());
+                reason: part_response.reason.unwrap_or_default().to_string(),
+            }
+            .into());
         }
         (None, Some(code)) => {
             return Err(Error::BulkDeleteRequestInvalidInput {
                 code: code.to_string(),
-                reason: part_response.reason
-                    .unwrap_or_default()
-                    .to_string(),
-            }.into())
+                reason: part_response.reason.unwrap_or_default().to_string(),
+            }
+            .into())
         }
-        _ => {
-            return Err(invalid_response("missing part response status code").into())
-        }
+        _ => return Err(invalid_response("missing part response status code").into()),
     }
 
     Ok(())
 }
-
 
 #[derive(Debug)]
 pub(crate) struct AzureClient {
@@ -562,10 +550,13 @@ impl AzureClient {
             let url = self.config.path_url(path);
 
             // Build subrequest with proper authorization
-            let request = self.client.request(Method::DELETE, url)
+            let request = self
+                .client
+                .request(Method::DELETE, url)
                 .header(CONTENT_LENGTH, HeaderValue::from(0))
                 .with_azure_authorization(&credential, &self.config.account)
-                .build().unwrap();
+                .build()
+                .unwrap();
 
             // Url for part requests must be relative and without base
             let relative_url = self.config.service.make_relative(request.url()).unwrap();
@@ -581,9 +572,15 @@ impl AzureClient {
 
         // Send multipart request
         let url = self.config.path_url(&Path::from("/"));
-        let batch_response = self.client.request(Method::POST, url)
+        let batch_response = self
+            .client
+            .request(Method::POST, url)
             .query(&[("restype", "container"), ("comp", "batch")])
-            .header(CONTENT_TYPE, HeaderValue::from_str(format!("multipart/mixed; boundary={}", boundary).as_str()).unwrap())
+            .header(
+                CONTENT_TYPE,
+                HeaderValue::from_str(format!("multipart/mixed; boundary={}", boundary).as_str())
+                    .unwrap(),
+            )
             .header(CONTENT_LENGTH, HeaderValue::from(body_bytes.len()))
             .body(body_bytes)
             .with_azure_authorization(&credential, &self.config.account)
@@ -591,10 +588,8 @@ impl AzureClient {
             .await
             .context(BulkDeleteRequestSnafu {})?;
 
-        let invalid_response = |msg: &str| {
-            Error::InvalidBulkDeleteResponse {
-                reason: msg.to_string()
-            }
+        let invalid_response = |msg: &str| Error::InvalidBulkDeleteResponse {
+            reason: msg.to_string(),
         };
 
         let content_type = batch_response
@@ -608,17 +603,9 @@ impl AzureClient {
             .ok_or_else(|| invalid_response("invalid Content-Type value"))?
             .to_vec();
 
-        let start_marker = [
-            b"--".as_slice(),
-            boundary.as_slice(),
-            b"\r\n"
-        ].concat();
+        let start_marker = [b"--".as_slice(), boundary.as_slice(), b"\r\n"].concat();
 
-        let end_marker = [
-            b"--".as_slice(),
-            boundary.as_slice(),
-            b"--"
-        ].concat();
+        let end_marker = [b"--".as_slice(), boundary.as_slice(), b"--"].concat();
 
         let response_body = batch_response
             .bytes()
@@ -636,6 +623,15 @@ impl AzureClient {
                 .ok_or_else(|| invalid_response("missing start marker for part"))?;
 
             parse_response_part(&mut remaining, &mut results, &paths)?;
+
+            // Workaround for Azurite bug where it does not set content-length but still sends some
+            // body. This code skips to the next part or the end.
+            if let Some(pos) = remaining
+                .windows(start_marker.len())
+                .position(|s| s == start_marker.as_slice() || s == end_marker.as_slice())
+            {
+                remaining = &remaining[pos..];
+            }
 
             if remaining == end_marker {
                 break;
