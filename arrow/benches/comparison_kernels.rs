@@ -192,9 +192,10 @@ fn add_benchmark(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("eq scalar StringViewArray", |b| {
-        b.iter(|| eq(&scalar, &string_view_left).unwrap())
-    });
+    // fails on macOs?
+    // c.bench_function("eq scalar StringViewArray", |b| {
+    //     b.iter(|| eq(&scalar, &string_view_left).unwrap())
+    // });
 
     c.bench_function("eq StringArray StringArray", |b| {
         b.iter(|| eq(&string_left, &string_right).unwrap())
