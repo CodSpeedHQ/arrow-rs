@@ -15,10 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::path::Path;
 use arrow_array::RecordBatch;
-use arrow_cast::pretty::{pretty_format_batches};
+use arrow_cast::pretty::pretty_format_batches;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::file::metadata::ParquetMetaData;
+use std::path::Path;
 
 /// This example demonstrates advanced usage of Parquet metadata.
 ///
@@ -45,6 +46,10 @@ async fn main() -> parquet::errors::Result<()> {
     let metadata_path = "thift_metadata.dat"; // todo tempdir for now use local file to inspect it
 
     let metadata = get_metadata_from_parquet_file(&parquet_path).await;
+    println!(
+        "Read metadata from Parquet file into memory: {} bytes",
+        metadata.memory_size()
+    );
     let metadata = prepare_metadata(metadata);
     write_metadata_to_file(metadata, &metadata_path);
 
@@ -53,22 +58,25 @@ async fn main() -> parquet::errors::Result<()> {
     let batches = read_parquet_file_with_metadata(&parquet_path, metadata);
 
     // display the results
-    let batches_string = pretty_format_batches(&batches).unwrap()
-        .to_string();
-    let batches_lines :Vec<_> =  batches_string
-        .split('\n')
-        .collect();
+    let batches_string = pretty_format_batches(&batches).unwrap().to_string();
+    let batches_lines: Vec<_> = batches_string.split('\n').collect();
 
-    assert_eq!(batches_lines,
-        vec!["todo"]
-    );
+    assert_eq!(batches_lines, vec!["todo"]);
 
     Ok(())
 }
 
 /// Reads the metadata from a parquet file
 async fn get_metadata_from_parquet_file(file: impl AsRef<Path>) -> ParquetMetaData {
-    todo!();
+    // pretend we are reading the metadata from a remote object store
+    let file = std::fs::File::open(file).unwrap();
+    let file = tokio::fs::File::from_std(file);
+
+    let builder = ParquetRecordBatchStreamBuilder::new(file).await.unwrap();
+
+    // The metadata is Arc'd -- since we are going to modify it we
+    // need to clone it
+    builder.metadata().as_ref().clone()
 }
 
 /// modifies the metadata to reduce its size
@@ -98,8 +106,9 @@ fn read_metadata_from_file(file: impl AsRef<Path>) -> ParquetMetaData {
 /// beginning to read it.
 ///
 /// In this example, we read the results as Arrow record batches
-fn read_parquet_file_with_metadata(file: impl AsRef<Path>, metadata: ParquetMetaData) -> Vec<RecordBatch>{
+fn read_parquet_file_with_metadata(
+    file: impl AsRef<Path>,
+    metadata: ParquetMetaData,
+) -> Vec<RecordBatch> {
     todo!();
 }
-
-
