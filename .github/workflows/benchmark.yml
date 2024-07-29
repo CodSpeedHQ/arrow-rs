@@ -15,48 +15,39 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: miri
+name: codspeed-benchmarks
 
-concurrency:
-  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
-  cancel-in-progress: true
-
-# trigger for all PRs that touch certain files and changes to master
 on:
+  # Run on pushes to the main branch
   push:
     branches:
-      - master
+      - "master"
+  # Run on pull requests
   pull_request:
-    paths:
-      - .github/**
-      - arrow-array/**
-      - arrow-buffer/**
-      - arrow-cast/**
-      - arrow-csv/**
-      - arrow-data/**
-      - arrow-ipc/**
-      - arrow-json/**
-      - arrow-avro/**
-      - arrow-schema/**
-      - arrow-select/**
-      - arrow-string/**
-      - arrow/**
+  # `workflow_dispatch` allows CodSpeed to trigger backtest
+  # performance analysis in order to generate initial data.
+  workflow_dispatch:
 
 jobs:
-  miri-checks:
-    name: MIRI
+  benchmarks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Setup Rust toolchain
+      - name: Setup rust toolchain, cache and cargo-codspeed binary
+        uses: moonrepo/setup-rust@dcab3dcf9f278945f3f983bace1c7c84033433a7
+        with:
+          cache-target: release
+          bins: cargo-codspeed
+
+      - name: Build the benchmark target(s)
         run: |
-          rustup toolchain install nightly --component miri
-          rustup override set nightly
-          cargo miri setup
-      - name: Run Miri Checks
-        env:
-          RUST_BACKTRACE: full
-          RUST_LOG: "trace"
-        run: bash .github/workflows/miri.sh
+          cargo codspeed build -p arrow --features test_utils,csv,json,chrono-tz,pyarrow,prettyprint
+          cargo codspeed build -p parquet --features arrow,test_common,experimental,default
+          cargo codspeed build -p arrow-array -p arrow-buffer -p arrow-cast -p arrow-json
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@ab07afd34cbbb7a1306e8d14b7cc44e029eee37a
+        with:
+          run: cargo codspeed run
