@@ -15,11 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::io::Read;
 use arrow_array::RecordBatch;
 use arrow_cast::pretty::pretty_format_batches;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
-use parquet::file::metadata::ParquetMetaData;
+use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataWriter};
 use std::path::Path;
+use parquet::file::footer::{decode_footer, decode_metadata};
 
 /// This example demonstrates advanced usage of Parquet metadata.
 ///
@@ -55,6 +57,8 @@ async fn main() -> parquet::errors::Result<()> {
 
     // now read the metadata from the file and use it to read the Parquet file
     let metadata = read_metadata_from_file(&metadata_path);
+    println!("Read metadata from file: {metadata:#?}");
+
     let batches = read_parquet_file_with_metadata(&parquet_path, metadata);
 
     // display the results
@@ -81,21 +85,37 @@ async fn get_metadata_from_parquet_file(file: impl AsRef<Path>) -> ParquetMetaDa
 
 /// modifies the metadata to reduce its size
 fn prepare_metadata(metadata: ParquetMetaData) -> ParquetMetaData {
-    todo!();
+    // maybe we will do this
+    metadata
 }
 
 /// writes the metadata to a file
 ///
 /// The data is stored using the same thrift format as the Parquet file metadata
 fn write_metadata_to_file(metadata: ParquetMetaData, file: impl AsRef<Path>) {
-    todo!();
+    let file = std::fs::File::create(file).unwrap();
+    let writer = ParquetMetaDataWriter::new(file, &metadata);
+    writer.finish().unwrap()
 }
 
 /// Reads the metadata from a file
 ///
 /// This function reads the format written by `write_metadata_to_file`
 fn read_metadata_from_file(file: impl AsRef<Path>) -> ParquetMetaData {
-    todo!();
+    let mut file = std::fs::File::open(file).unwrap();
+    // This API is kind of awkward compared to the writer
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).unwrap();
+    let len = buffer.len();
+
+    let mut footer = [0; 8];
+    footer.copy_from_slice(&buffer[len - 8..len]);
+
+    let md_length = decode_footer(&footer).unwrap();
+    // note this also doesn't contain the ColumnOffset or ColumnIndex
+    let metadata_buffer = &buffer[len - 8 - md_length..md_length];
+    decode_metadata(metadata_buffer).unwrap()
+
 }
 
 /// Reads the Parquet file using the metadata
