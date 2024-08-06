@@ -15,13 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::io::Read;
 use arrow_array::RecordBatch;
 use arrow_cast::pretty::pretty_format_batches;
+use parquet::arrow::arrow_reader::{
+    ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder,
+};
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
-use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataWriter};
-use std::path::Path;
 use parquet::file::footer::{decode_footer, decode_metadata};
+use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataWriter};
+use std::io::Read;
+use std::path::Path;
 
 /// This example demonstrates advanced usage of Parquet metadata.
 ///
@@ -65,7 +68,23 @@ async fn main() -> parquet::errors::Result<()> {
     let batches_string = pretty_format_batches(&batches).unwrap().to_string();
     let batches_lines: Vec<_> = batches_string.split('\n').collect();
 
-    assert_eq!(batches_lines, vec!["todo"]);
+    assert_eq!(batches_lines,
+               [
+                   "+----+----------+-------------+--------------+---------+------------+-----------+------------+------------------+------------+---------------------+",
+                   "| id | bool_col | tinyint_col | smallint_col | int_col | bigint_col | float_col | double_col | date_string_col  | string_col | timestamp_col       |",
+                   "+----+----------+-------------+--------------+---------+------------+-----------+------------+------------------+------------+---------------------+",
+                   "| 4  | true     | 0           | 0            | 0       | 0          | 0.0       | 0.0        | 30332f30312f3039 | 30         | 2009-03-01T00:00:00 |",
+                   "| 5  | false    | 1           | 1            | 1       | 10         | 1.1       | 10.1       | 30332f30312f3039 | 31         | 2009-03-01T00:01:00 |",
+                   "| 6  | true     | 0           | 0            | 0       | 0          | 0.0       | 0.0        | 30342f30312f3039 | 30         | 2009-04-01T00:00:00 |",
+                   "| 7  | false    | 1           | 1            | 1       | 10         | 1.1       | 10.1       | 30342f30312f3039 | 31         | 2009-04-01T00:01:00 |",
+                   "| 2  | true     | 0           | 0            | 0       | 0          | 0.0       | 0.0        | 30322f30312f3039 | 30         | 2009-02-01T00:00:00 |",
+                   "| 3  | false    | 1           | 1            | 1       | 10         | 1.1       | 10.1       | 30322f30312f3039 | 31         | 2009-02-01T00:01:00 |",
+                   "| 0  | true     | 0           | 0            | 0       | 0          | 0.0       | 0.0        | 30312f30312f3039 | 30         | 2009-01-01T00:00:00 |",
+                   "| 1  | false    | 1           | 1            | 1       | 10         | 1.1       | 10.1       | 30312f30312f3039 | 31         | 2009-01-01T00:01:00 |",
+                   "+----+----------+-------------+--------------+---------+------------+-----------+------------+------------------+------------+---------------------+",
+               ]
+
+               , "actual output:\n\n{batches_lines:#?}");
 
     Ok(())
 }
@@ -115,7 +134,6 @@ fn read_metadata_from_file(file: impl AsRef<Path>) -> ParquetMetaData {
     // note this also doesn't contain the ColumnOffset or ColumnIndex
     let metadata_buffer = &buffer[len - 8 - md_length..md_length];
     decode_metadata(metadata_buffer).unwrap()
-
 }
 
 /// Reads the Parquet file using the metadata
@@ -130,5 +148,15 @@ fn read_parquet_file_with_metadata(
     file: impl AsRef<Path>,
     metadata: ParquetMetaData,
 ) -> Vec<RecordBatch> {
-    todo!();
+    let file = std::fs::File::open(file).unwrap();
+    let options = ArrowReaderOptions::new()
+        // tell the reader to read the page index
+        .with_page_index(true);
+    // create a reader with pre-existing metadata
+    let arrow_reader_metadata = ArrowReaderMetadata::try_new(metadata.into(), options).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, arrow_reader_metadata)
+        .build()
+        .unwrap();
+
+    reader.collect::<arrow::error::Result<Vec<_>>>().unwrap()
 }
