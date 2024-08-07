@@ -36,7 +36,7 @@ use std::path::Path;
 /// single object store request.
 ///
 /// Specifically it:
-/// 1. It reads the metadata of a Parquet file
+/// 1. Reads the metadata of a Parquet file
 /// 2. Removes some column statistics from the metadata (to make them smaller)
 /// 3. Stores the metadata in a separate file
 /// 4. Reads the metadata from the separate file and uses that to read the Parquet file
