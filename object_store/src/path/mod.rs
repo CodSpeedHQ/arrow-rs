@@ -19,7 +19,6 @@
 
 use itertools::Itertools;
 use percent_encoding::percent_decode;
-use snafu::{ensure, ResultExt, Snafu};
 use std::fmt::Formatter;
 #[cfg(not(target_arch = "wasm32"))]
 use url::Url;
@@ -35,32 +34,32 @@ mod parts;
 pub use parts::{InvalidPart, PathPart};
 
 /// Error returned by [`Path::parse`]
-#[derive(Debug, Snafu)]
+#[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(display("Path \"{}\" contained empty path segment", path))]
+    #[error("Path \"{}\" contained empty path segment", path)]
     EmptySegment { path: String },
 
-    #[snafu(display("Error parsing Path \"{}\": {}", path, source))]
+    #[error("Error parsing Path \"{}\": {}", path, source)]
     BadSegment { path: String, source: InvalidPart },
 
-    #[snafu(display("Failed to canonicalize path \"{}\": {}", path.display(), source))]
+    #[error("Failed to canonicalize path \"{}\": {}", path.display(), source)]
     Canonicalize {
         path: std::path::PathBuf,
         source: std::io::Error,
     },
 
-    #[snafu(display("Unable to convert path \"{}\" to URL", path.display()))]
+    #[error("Unable to convert path \"{}\" to URL", path.display())]
     InvalidPath { path: std::path::PathBuf },
 
-    #[snafu(display("Path \"{}\" contained non-unicode characters: {}", path, source))]
+    #[error("Path \"{}\" contained non-unicode characters: {}", path, source)]
     NonUnicode {
         path: String,
         source: std::str::Utf8Error,
     },
 
-    #[snafu(display("Path {} does not start with prefix {}", path, prefix))]
+    #[error("Path {} does not start with prefix {}", path, prefix)]
     PrefixMismatch { path: String, prefix: String },
 }
 
@@ -148,8 +147,14 @@ impl Path {
         let stripped = stripped.strip_suffix(DELIMITER).unwrap_or(stripped);
 
         for segment in stripped.split(DELIMITER) {
-            ensure!(!segment.is_empty(), EmptySegmentSnafu { path });
-            PathPart::parse(segment).context(BadSegmentSnafu { path })?;
+            if segment.is_empty() {
+                return Err(Error::EmptySegment { path: path.into() });
+            }
+
+            PathPart::parse(segment).map_err(|source| {
+                let path = path.into();
+                Error::BadSegment { source, path }
+            })?;
         }
 
         Ok(Self {
@@ -165,8 +170,9 @@ impl Path {
     ///
     /// Note: this will canonicalize the provided path, resolving any symlinks
     pub fn from_filesystem_path(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let absolute = std::fs::canonicalize(&path).context(CanonicalizeSnafu {
-            path: path.as_ref(),
+        let absolute = std::fs::canonicalize(&path).map_err(|source| {
+            let path = path.as_ref().into();
+            Error::Canonicalize { source, path }
         })?;
 
         Self::from_absolute_path(absolute)
@@ -216,7 +222,10 @@ impl Path {
         let path = path.as_ref();
         let decoded = percent_decode(path.as_bytes())
             .decode_utf8()
-            .context(NonUnicodeSnafu { path })?;
+            .map_err(|source| {
+                let path = path.into();
+                Error::NonUnicode { source, path }
+            })?;
 
         Self::parse(decoded)
     }
