@@ -562,7 +562,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{stream::BoxStream, StreamExt, TryStreamExt};
-use snafu::Snafu;
 use std::fmt::{Debug, Formatter};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Seek, SeekFrom};
@@ -1223,78 +1222,81 @@ pub struct PutResult {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A specialized `Error` for object store-related errors
-#[derive(Debug, Snafu)]
+#[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(display("Generic {} error: {}", store, source))]
+    #[error("Generic {} error: {}", store, source)]
     Generic {
         store: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Object at location {} not found: {}", path, source))]
+    #[error("Object at location {} not found: {}", path, source)]
     NotFound {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(
-        display("Encountered object with invalid path: {}", source),
-        context(false)
-    )]
-    InvalidPath { source: path::Error },
+    #[error("Encountered object with invalid path: {}", source)]
+    InvalidPath {
+        #[from]
+        source: path::Error,
+    },
 
-    #[snafu(display("Error joining spawned task: {}", source), context(false))]
-    JoinError { source: tokio::task::JoinError },
+    #[error("Error joining spawned task: {}", source)]
+    JoinError {
+        #[from]
+        source: tokio::task::JoinError,
+    },
 
-    #[snafu(display("Operation not supported: {}", source))]
+    #[error("Operation not supported: {}", source)]
     NotSupported {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Object at location {} already exists: {}", path, source))]
+    #[error("Object at location {} already exists: {}", path, source)]
     AlreadyExists {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Request precondition failure for path {}: {}", path, source))]
+    #[error("Request precondition failure for path {}: {}", path, source)]
     Precondition {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Object at location {} not modified: {}", path, source))]
+    #[error("Object at location {} not modified: {}", path, source)]
     NotModified {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Operation not yet implemented."))]
+    #[error("Operation not yet implemented.")]
     NotImplemented,
 
-    #[snafu(display(
+    #[error(
         "The operation lacked the necessary privileges to complete for path {}: {}",
         path,
         source
-    ))]
+    )]
     PermissionDenied {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display(
+    #[error(
         "The operation lacked valid authentication credentials for path {}: {}",
         path,
         source
-    ))]
+    )]
     Unauthenticated {
         path: String,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    #[snafu(display("Configuration key: '{}' is not valid for store '{}'.", key, store))]
+    #[error("Configuration key: '{}' is not valid for store '{}'.", key, store)]
     UnknownConfigurationKey { store: &'static str, key: String },
 }
 
