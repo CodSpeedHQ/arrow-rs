@@ -150,35 +150,47 @@ pub fn create_codec(codec: CodecType, _options: &CodecOptions) -> Result<Option<
         CodecType::BROTLI(level) => {
             #[cfg(any(feature = "brotli", test))]
             return Ok(Some(Box::new(BrotliCodec::new(level))));
-            Err(ParquetError::General("Disabled feature at compile time: brotli".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: brotli".into(),
+            ))
+        }
         CodecType::GZIP(level) => {
             #[cfg(any(feature = "flate2", test))]
             return Ok(Some(Box::new(GZipCodec::new(level))));
-            Err(ParquetError::General("Disabled feature at compile time: flate2".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: flate2".into(),
+            ))
+        }
         CodecType::SNAPPY => {
             #[cfg(any(feature = "snap", test))]
             return Ok(Some(Box::new(SnappyCodec::new())));
-            Err(ParquetError::General("Disabled feature at compile time: snap".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: snap".into(),
+            ))
+        }
         CodecType::LZ4 => {
             #[cfg(any(feature = "lz4", test))]
             return Ok(Some(Box::new(LZ4HadoopCodec::new(
                 _options.backward_compatible_lz4,
             ))));
-            Err(ParquetError::General("Disabled feature at compile time: lz4".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: lz4".into(),
+            ))
+        }
         CodecType::ZSTD(level) => {
             #[cfg(any(feature = "zstd", test))]
             return Ok(Some(Box::new(ZSTDCodec::new(level))));
-            Err(ParquetError::General("Disabled feature at compile time: zstd".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: zstd".into(),
+            ))
+        }
         CodecType::LZ4_RAW => {
             #[cfg(any(feature = "lz4", test))]
             return Ok(Some(Box::new(LZ4RawCodec::new())));
-            Err(ParquetError::General("Disabled feature at compile time: lz4".into()))
-        },
+            Err(ParquetError::General(
+                "Disabled feature at compile time: lz4".into(),
+            ))
+        }
         CodecType::UNCOMPRESSED => Ok(None),
         _ => Err(nyi_err!("The codec type {} is not supported yet", codec)),
     }
@@ -190,6 +202,7 @@ mod snappy_codec {
 
     use crate::compression::Codec;
     use crate::errors::Result;
+    use crate::util::vec_util;
 
     /// Codec for Snappy compression format.
     pub struct SnappyCodec {
@@ -219,7 +232,8 @@ mod snappy_codec {
                 None => decompress_len(input_buf)?,
             };
             let offset = output_buf.len();
-            output_buf.resize(offset + len, 0);
+            vec_util::resize_buffer_without_init(output_buf, offset + len);
+
             self.decoder
                 .decompress(input_buf, &mut output_buf[offset..])
                 .map_err(|e| e.into())
@@ -228,7 +242,7 @@ mod snappy_codec {
         fn compress(&mut self, input_buf: &[u8], output_buf: &mut Vec<u8>) -> Result<()> {
             let output_buf_len = output_buf.len();
             let required_len = max_compress_len(input_buf.len());
-            output_buf.resize(output_buf_len + required_len, 0);
+            vec_util::resize_buffer_without_init(output_buf, output_buf_len + required_len);
             let n = self
                 .encoder
                 .compress(input_buf, &mut output_buf[output_buf_len..])?;
@@ -237,6 +251,7 @@ mod snappy_codec {
         }
     }
 }
+
 #[cfg(any(feature = "snap", test))]
 pub use snappy_codec::*;
 
@@ -542,6 +557,7 @@ mod lz4_raw_codec {
     use crate::compression::Codec;
     use crate::errors::ParquetError;
     use crate::errors::Result;
+    use crate::util::vec_util;
 
     /// Codec for LZ4 Raw compression algorithm.
     pub struct LZ4RawCodec {}
@@ -569,7 +585,7 @@ mod lz4_raw_codec {
                     ))
                 }
             };
-            output_buf.resize(offset + required_len, 0);
+            vec_util::resize_buffer_without_init(output_buf, offset + required_len);
             match lz4_flex::block::decompress_into(input_buf, &mut output_buf[offset..]) {
                 Ok(n) => {
                     if n != required_len {
@@ -586,7 +602,7 @@ mod lz4_raw_codec {
         fn compress(&mut self, input_buf: &[u8], output_buf: &mut Vec<u8>) -> Result<()> {
             let offset = output_buf.len();
             let required_len = lz4_flex::block::get_maximum_output_size(input_buf.len());
-            output_buf.resize(offset + required_len, 0);
+            vec_util::resize_buffer_without_init(output_buf, offset + required_len);
             match lz4_flex::block::compress_into(input_buf, &mut output_buf[offset..]) {
                 Ok(n) => {
                     output_buf.truncate(offset + n);
@@ -606,6 +622,7 @@ mod lz4_hadoop_codec {
     use crate::compression::lz4_raw_codec::LZ4RawCodec;
     use crate::compression::Codec;
     use crate::errors::{ParquetError, Result};
+    use crate::util::vec_util;
     use std::io;
 
     /// Size of u32 type.
@@ -718,7 +735,7 @@ mod lz4_hadoop_codec {
                     ))
                 }
             };
-            output_buf.resize(output_len + required_len, 0);
+            vec_util::resize_buffer_without_init(output_buf, output_len + required_len);
             match try_decompress_hadoop(input_buf, &mut output_buf[output_len..]) {
                 Ok(n) => {
                     if n != required_len {
@@ -749,7 +766,7 @@ mod lz4_hadoop_codec {
         fn compress(&mut self, input_buf: &[u8], output_buf: &mut Vec<u8>) -> Result<()> {
             // Allocate memory to store the LZ4_HADOOP prefix.
             let offset = output_buf.len();
-            output_buf.resize(offset + PREFIX_LEN, 0);
+            vec_util::resize_buffer_without_init(output_buf, offset + PREFIX_LEN);
 
             // Append LZ4_RAW compressed bytes after prefix.
             LZ4RawCodec::new().compress(input_buf, output_buf)?;
