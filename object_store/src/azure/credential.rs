@@ -32,7 +32,6 @@ use reqwest::header::{
 };
 use reqwest::{Client, Method, Request, RequestBuilder};
 use serde::Deserialize;
-use snafu::{ResultExt, Snafu};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -66,27 +65,27 @@ const AZURE_STORAGE_SCOPE: &str = "https://storage.azure.com/.default";
 /// <https://learn.microsoft.com/en-us/azure/storage/blobs/authorize-access-azure-active-directory#microsoft-authentication-library-msal>
 const AZURE_STORAGE_RESOURCE: &str = "https://storage.azure.com";
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[snafu(display("Error performing token request: {}", source))]
+    #[error("Error performing token request: {}", source)]
     TokenRequest { source: crate::client::retry::Error },
 
-    #[snafu(display("Error getting token response body: {}", source))]
+    #[error("Error getting token response body: {}", source)]
     TokenResponseBody { source: reqwest::Error },
 
-    #[snafu(display("Error reading federated token file "))]
+    #[error("Error reading federated token file ")]
     FederatedTokenFile,
 
-    #[snafu(display("Invalid Access Key: {}", source))]
+    #[error("Invalid Access Key: {}", source)]
     InvalidAccessKey { source: base64::DecodeError },
 
-    #[snafu(display("'az account get-access-token' command failed: {message}"))]
+    #[error("'az account get-access-token' command failed: {message}")]
     AzureCli { message: String },
 
-    #[snafu(display("Failed to parse azure cli response: {source}"))]
+    #[error("Failed to parse azure cli response: {source}")]
     AzureCliResponse { source: serde_json::Error },
 
-    #[snafu(display("Generating SAS keys with SAS tokens auth is not supported"))]
+    #[error("Generating SAS keys with SAS tokens auth is not supported")]
     SASforSASNotSupported,
 }
 
@@ -108,7 +107,10 @@ pub struct AzureAccessKey(Vec<u8>);
 impl AzureAccessKey {
     /// Create a new [`AzureAccessKey`], checking it for validity
     pub fn try_new(key: &str) -> Result<Self> {
-        let key = BASE64_STANDARD.decode(key).context(InvalidAccessKeySnafu)?;
+        let key = BASE64_STANDARD
+            .decode(key)
+            .map_err(|source| Error::InvalidAccessKey { source })?;
+
         Ok(Self(key))
     }
 }
@@ -619,10 +621,10 @@ impl TokenProvider for ClientSecretOAuthProvider {
             .idempotent(true)
             .send()
             .await
-            .context(TokenRequestSnafu)?
+            .map_err(|source| Error::TokenRequest { source })?
             .json()
             .await
-            .context(TokenResponseBodySnafu)?;
+            .map_err(|source| Error::TokenResponseBody { source })?;
 
         Ok(TemporaryToken {
             token: Arc::new(AzureCredential::BearerToken(response.access_token)),
@@ -727,10 +729,10 @@ impl TokenProvider for ImdsManagedIdentityProvider {
         let response: ImdsTokenResponse = builder
             .send_retry(retry)
             .await
-            .context(TokenRequestSnafu)?
+            .map_err(|source| Error::TokenRequest { source })?
             .json()
             .await
-            .context(TokenResponseBodySnafu)?;
+            .map_err(|source| Error::TokenResponseBody { source })?;
 
         Ok(TemporaryToken {
             token: Arc::new(AzureCredential::BearerToken(response.access_token)),
@@ -803,10 +805,10 @@ impl TokenProvider for WorkloadIdentityOAuthProvider {
             .idempotent(true)
             .send()
             .await
-            .context(TokenRequestSnafu)?
+            .map_err(|source| Error::TokenRequest { source })?
             .json()
             .await
-            .context(TokenResponseBodySnafu)?;
+            .map_err(|source| Error::TokenResponseBody { source })?;
 
         Ok(TemporaryToken {
             token: Arc::new(AzureCredential::BearerToken(response.access_token)),
@@ -883,7 +885,8 @@ impl AzureCliCredential {
                 })?;
 
                 let token_response = serde_json::from_str::<AzureCliTokenResponse>(output)
-                    .context(AzureCliResponseSnafu)?;
+                    .map_err(|source| Error::AzureCliResponse { source })?;
+
                 if !token_response.token_type.eq_ignore_ascii_case("bearer") {
                     return Err(Error::AzureCli {
                         message: format!(

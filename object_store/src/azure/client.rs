@@ -41,7 +41,6 @@ use reqwest::{
     Client as ReqwestClient, Method, RequestBuilder, Response,
 };
 use serde::{Deserialize, Serialize};
-use snafu::{OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,57 +58,57 @@ static MS_CONTENT_LANGUAGE: HeaderName = HeaderName::from_static("x-ms-blob-cont
 static TAGS_HEADER: HeaderName = HeaderName::from_static("x-ms-tags");
 
 /// A specialized `Error` for object store-related errors
-#[derive(Debug, Snafu)]
+#[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
 pub(crate) enum Error {
-    #[snafu(display("Error performing get request {}: {}", path, source))]
+    #[error("Error performing get request {}: {}", path, source)]
     GetRequest {
         source: crate::client::retry::Error,
         path: String,
     },
 
-    #[snafu(display("Error performing put request {}: {}", path, source))]
+    #[error("Error performing put request {}: {}", path, source)]
     PutRequest {
         source: crate::client::retry::Error,
         path: String,
     },
 
-    #[snafu(display("Error performing delete request {}: {}", path, source))]
+    #[error("Error performing delete request {}: {}", path, source)]
     DeleteRequest {
         source: crate::client::retry::Error,
         path: String,
     },
 
-    #[snafu(display("Error performing list request: {}", source))]
+    #[error("Error performing list request: {}", source)]
     ListRequest { source: crate::client::retry::Error },
 
-    #[snafu(display("Error getting list response body: {}", source))]
+    #[error("Error getting list response body: {}", source)]
     ListResponseBody { source: reqwest::Error },
 
-    #[snafu(display("Got invalid list response: {}", source))]
+    #[error("Got invalid list response: {}", source)]
     InvalidListResponse { source: quick_xml::de::DeError },
 
-    #[snafu(display("Unable to extract metadata from headers: {}", source))]
+    #[error("Unable to extract metadata from headers: {}", source)]
     Metadata {
         source: crate::client::header::Error,
     },
 
-    #[snafu(display("ETag required for conditional update"))]
+    #[error("ETag required for conditional update")]
     MissingETag,
 
-    #[snafu(display("Error requesting user delegation key: {}", source))]
+    #[error("Error requesting user delegation key: {}", source)]
     DelegationKeyRequest { source: crate::client::retry::Error },
 
-    #[snafu(display("Error getting user delegation key response body: {}", source))]
+    #[error("Error getting user delegation key response body: {}", source)]
     DelegationKeyResponseBody { source: reqwest::Error },
 
-    #[snafu(display("Got invalid user delegation key response: {}", source))]
+    #[error("Got invalid user delegation key response: {}", source)]
     DelegationKeyResponse { source: quick_xml::de::DeError },
 
-    #[snafu(display("Generating SAS keys with SAS tokens auth is not supported"))]
+    #[error("Generating SAS keys with SAS tokens auth is not supported")]
     SASforSASNotSupported,
 
-    #[snafu(display("Generating SAS keys while skipping signatures is not supported"))]
+    #[error("Generating SAS keys while skipping signatures is not supported")]
     SASwithSkipSignature,
 }
 
@@ -235,8 +234,9 @@ impl<'a> PutRequest<'a> {
             .payload(Some(self.payload))
             .send()
             .await
-            .context(PutRequestSnafu {
-                path: self.path.as_ref(),
+            .map_err(|source| {
+                let path = self.path.as_ref().into();
+                Error::PutRequest { path, source }
             })?;
 
         Ok(response)
@@ -294,13 +294,14 @@ impl AzureClient {
             PutMode::Overwrite => builder.idempotent(true),
             PutMode::Create => builder.header(&IF_NONE_MATCH, "*"),
             PutMode::Update(v) => {
-                let etag = v.e_tag.as_ref().context(MissingETagSnafu)?;
+                let etag = v.e_tag.as_ref().ok_or(Error::MissingETag)?;
                 builder.header(&IF_MATCH, etag)
             }
         };
 
         let response = builder.header(&BLOB_TYPE, "BlockBlob").send().await?;
-        Ok(get_put_result(response.headers(), VERSION_HEADER).context(MetadataSnafu)?)
+        Ok(get_put_result(response.headers(), VERSION_HEADER)
+            .map_err(|source| Error::Metadata { source })?)
     }
 
     /// PUT a block <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
@@ -344,7 +345,8 @@ impl AzureClient {
             .send()
             .await?;
 
-        Ok(get_put_result(response.headers(), VERSION_HEADER).context(MetadataSnafu)?)
+        Ok(get_put_result(response.headers(), VERSION_HEADER)
+            .map_err(|source| Error::Metadata { source })?)
     }
 
     /// Make an Azure Delete request <https://docs.microsoft.com/en-us/rest/api/storageservices/delete-blob>
@@ -363,8 +365,9 @@ impl AzureClient {
             .with_azure_authorization(&credential, &self.config.account)
             .send_retry(&self.config.retry_config)
             .await
-            .context(DeleteRequestSnafu {
-                path: path.as_ref(),
+            .map_err(|source| {
+                let path = path.as_ref().into();
+                Error::DeleteRequest { source, path }
             })?;
 
         Ok(())
@@ -433,13 +436,13 @@ impl AzureClient {
             .idempotent(true)
             .send()
             .await
-            .context(DelegationKeyRequestSnafu)?
+            .map_err(|source| Error::DelegationKeyRequest { source })?
             .bytes()
             .await
-            .context(DelegationKeyResponseBodySnafu)?;
+            .map_err(|source| Error::DelegationKeyResponseBody { source })?;
 
-        let response: UserDelegationKey =
-            quick_xml::de::from_reader(response.reader()).context(DelegationKeyResponseSnafu)?;
+        let response: UserDelegationKey = quick_xml::de::from_reader(response.reader())
+            .map_err(|source| Error::DelegationKeyResponse { source })?;
 
         Ok(response)
     }
@@ -489,9 +492,11 @@ impl AzureClient {
             .with_azure_authorization(&credential, &self.config.account)
             .send_retry(&self.config.retry_config)
             .await
-            .context(GetRequestSnafu {
-                path: path.as_ref(),
+            .map_err(|source| {
+                let path = path.as_ref().into();
+                Error::GetRequest { source, path }
             })?;
+
         Ok(response)
     }
 }
@@ -541,8 +546,9 @@ impl GetClient for AzureClient {
             .with_azure_authorization(&credential, &self.config.account)
             .send_retry(&self.config.retry_config)
             .await
-            .context(GetRequestSnafu {
-                path: path.as_ref(),
+            .map_err(|source| {
+                let path = path.as_ref().into();
+                Error::GetRequest { source, path }
             })?;
 
         match response.headers().get("x-ms-resource-type") {
@@ -597,13 +603,14 @@ impl ListClient for AzureClient {
             .with_azure_authorization(&credential, &self.config.account)
             .send_retry(&self.config.retry_config)
             .await
-            .context(ListRequestSnafu)?
+            .map_err(|source| Error::ListRequest { source })?
             .bytes()
             .await
-            .context(ListResponseBodySnafu)?;
+            .map_err(|source| Error::ListResponseBody { source })?;
 
-        let mut response: ListResultInternal =
-            quick_xml::de::from_reader(response.reader()).context(InvalidListResponseSnafu)?;
+        let mut response: ListResultInternal = quick_xml::de::from_reader(response.reader())
+            .map_err(|source| Error::InvalidListResponse { source })?;
+
         let token = response.next_marker.take();
 
         Ok((to_list_result(response, prefix)?, token))
